@@ -10,6 +10,7 @@ import smach_ros
 from TransitionModule import Transition, InitializingTran, StandbyTran, FinalizingTran, RunningTran, PreparingTran, WorkingTran, OperatingTran, NonOperatingTran, PausedTran
 from CollaborationToolModule import CollaborationTool
 from CollaborationStateHeader import *
+from std_msgs.msg import Int32
 
 #コマンド取得.
 class GET_COMMAND(CollaborationState):
@@ -103,25 +104,44 @@ class WAIT_START(CollaborationState):
         return 'aborted'
 
 class MonitorState(smach_ros.MonitorState):
-    def __init__(self, label, taskfin:TaskFinishServer, tran:Transition, topic, msg_type, cond_cb):
-        super().__init__(topic, msg_type, cond_cb, -1)
+    def __init__(
+        self,
+        label,
+        taskfin: TaskFinishServer,
+        tran: Transition,
+        topic,
+        msg_type,
+        cond_cb
+    ):
+        node = CollaborationTool.get_node()
+
+        super().__init__(
+            node,
+            topic,
+            msg_type,
+            cond_cb,
+            -1
+        )
+
         self.tran = tran
         self.label = label
         self.taskfin = taskfin
         
-    def set_event(self, event:EnumEvent):
+    def set_event(self, event: EnumEvent):
         self.tran.set_event(event)
                
     def execute(self, userdata):
         if self.tran.get_event().is_workend():
-            #現在のコマンドリストを取得.
+            # 現在のコマンドリストを取得.
             task_command_list = CollaborationCurrentData.GetCurrentCommandList()
             task_command = task_command_list.get(0)
             self.taskfin.execute(task_command)
-        if self.tran.is_tran() :
+
+        if self.tran.is_tran():
             nextstate = self.tran.transition()
             self.tran.reset_event()
             return nextstate
+
         return super().execute(userdata)
     
     def get_state(self):
@@ -204,9 +224,21 @@ class HumanCollaborationStateMachine(CollaborationEventSubscriver):
             'smach_server', self.statemachine, '/SM_ROOT')
 
     def execute(self):
-        self.sis.start()
-        self.statemachine.execute()
+        try:
+            self.sis.start()
+            self.statemachine.execute()
+        finally:
+            self.shutdown_introspection()
+
+    def shutdown_introspection(self):
+        # IntrospectionServerが生成したproxyを停止する.
         self.sis.stop()
+
+        # ROS2 Humble版IntrospectionServerは、
+        # コンストラクタ内でexecutor用spinスレッドを開始するため、
+        # rclpy.shutdown()より前に明示的に終了する.
+        self.sis._executor.shutdown()
+        self.sis._spinner.join()
 
     #コマンド受信.
     def update(self, event:EnumEvent, data):
@@ -394,7 +426,7 @@ class HumanCollaborationStateMachine(CollaborationEventSubscriver):
                             outcome_cb=out_manip_cb)
         with concur:
             concur.add('Running', Running)
-            concur.add('HUMAN DETECT', MonitorState('HUMAN DETECT', self.taskfinal, RunningTran(),'/intrusion_result', int, humandetect_cb,))
+            concur.add('HUMAN DETECT', MonitorState('HUMAN DETECT', self.taskfinal, RunningTran(),'/intrusion_result', Int32, humandetect_cb,))
 
 ##################################################################
 #　　　　　　　　　　　 メイン処理内容                           #

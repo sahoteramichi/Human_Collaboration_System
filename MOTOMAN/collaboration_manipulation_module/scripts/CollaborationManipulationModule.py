@@ -58,9 +58,8 @@ class HumanCollaboration:
 #　　　　　　　　　　　 以下実行処理内容                         #
 ##################################################################   
 if __name__ == '__main__':
- hc = HumanCollaboration()
- CollaborationTool.init_node('human_collaboration_node')
- 
-#実行
- hc.execute()
- 
+    hc = HumanCollaboration()
+
+    CollaborationTool.start_executor()
+
+    hc.execute()

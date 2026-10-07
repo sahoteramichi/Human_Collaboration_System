@@ -1,14 +1,16 @@
 #!/usr/bin/env python3
 # coding: UTF-8
 
-import rospy
-from rospy.topics import Publisher, Subscriber
+import rclpy
+import tf2_ros
+
 from std_msgs.msg import String
+from geometry_msgs.msg import TransformStamped
+
 from CollaborationStateHeader import *
 from TransitionModule import Transition
 from CollaborationToolModule import CollaborationTool
 from CollaborationCommunicationModule import *
-from geometry_msgs.msg import TransformStamped
 from MovePlannerModule import MovePlanner
 
 #定数の定義
@@ -50,114 +52,190 @@ CAMERA_NAME = 'camera'
 MARKER_NAME = 'marker_frame'
 
 ###########################################
-#ハンド制御クラス.                        #
+# ハンド制御クラス.                       #
 ###########################################
 class GripperControlCommand:
-  def __init__(self):
+    def __init__(self):
+        self.node = CollaborationTool.get_node()
+
         # publisher
-        self.control_pub = Publisher('/gripper_judge', String, queue_size=100)
+        self.control_pub = self.node.create_publisher(
+            String,
+            '/gripper_judge',
+            100
+        )
+
         # subscriber
-        self.result_sub = Subscriber('/hand_result', String, self.ResultCallback)
+        self.result_sub = self.node.create_subscription(
+            String,
+            '/hand_result',
+            self.ResultCallback,
+            10
+        )
 
         self.send_judge = String()
-
         self.recieve_result = String()
 
         self.GRIPPER_RETRY_CNT = 100
-
         self.GRIPPER_MOVE_WAIT = 5.0
 
-  def gripper_control(self, command="open"):
-    wait_cnt = 0
-    if(command == "open"):
-      while True:
-        self.send_judge = "open"
-        self.control_pub.publish(self.send_judge)
-        
-        if(self.recieve_result.data == "done"):
-          self.send_judge = "done"
-          self.control_pub.publish(self.send_judge)
-          break
-        elif (wait_cnt > self.GRIPPER_RETRY_CNT):
-          CollaborationTool.loginfo("gripper retry...")
-          break
+    def gripper_control(self, command="open"):
+        wait_cnt = 0
 
-        rospy.sleep(0.1)
-        wait_cnt += 1
+        if command == "open":
+            while True:
+                self.send_judge.data = "open"
+                self.control_pub.publish(self.send_judge)
 
-    if(command == "close"):
-      while True:
-        self.send_judge = "close"
-        self.control_pub.publish(self.send_judge)
-        
-        if(self.recieve_result.data == "done"):
-          self.send_judge = "done"
-          self.control_pub.publish(self.send_judge)
-          break
-        elif (wait_cnt > self.GRIPPER_RETRY_CNT):
-          CollaborationTool.loginfo("gripper retry...")
-          break
+                if self.recieve_result.data == "done":
+                    self.send_judge.data = "done"
+                    self.control_pub.publish(self.send_judge)
+                    break
 
-        rospy.sleep(0.1)
-        wait_cnt += 1
+                elif wait_cnt > self.GRIPPER_RETRY_CNT:
+                    CollaborationTool.loginfo(
+                        "gripper retry..."
+                    )
+                    break
 
-    rospy.sleep(self.GRIPPER_MOVE_WAIT)
-  
-    if (wait_cnt > self.GRIPPER_RETRY_CNT):
-      return False
-    else: 
-      return True
+                CollaborationTool.wait_time(0.1)
+                wait_cnt += 1
 
-  def ResultCallback(self, result_):
-    self.recieve_result = result_
+        if command == "close":
+            while True:
+                self.send_judge.data = "close"
+                self.control_pub.publish(self.send_judge)
+
+                if self.recieve_result.data == "done":
+                    self.send_judge.data = "done"
+                    self.control_pub.publish(self.send_judge)
+                    break
+
+                elif wait_cnt > self.GRIPPER_RETRY_CNT:
+                    CollaborationTool.loginfo(
+                        "gripper retry..."
+                    )
+                    break
+
+                CollaborationTool.wait_time(0.1)
+                wait_cnt += 1
+
+        CollaborationTool.wait_time(
+            self.GRIPPER_MOVE_WAIT
+        )
+
+        if wait_cnt > self.GRIPPER_RETRY_CNT:
+            return False
+        else:
+            return True
+
+    def ResultCallback(self, result_):
+        self.recieve_result = result_
 
 ###########################################
-#TFブロードキャストクラス.                #
+# TFブロードキャストクラス.               #
 ###########################################
-#協働ブロードキャストクラスの抽象クラス.
+
+# 協働ブロードキャストクラスの抽象クラス.
 class HumanCollaborationBroadcast(CollaborationCommunication):
     """
     Base class that HumanCollaboration communication for request
     Define machine-dependent packages
     """
+
     def __init__(self):
-        self.broadcaster = tf2_ros.StaticTransformBroadcaster()
+        self.node = CollaborationTool.get_node()
+
+        self.broadcaster = tf2_ros.StaticTransformBroadcaster(
+            self.node
+        )
 
     def execute(self, object):
         pass
 
-#TFブロードキャストクラス.
+
+# TFブロードキャストクラス.
 class TfBroadcast(HumanCollaborationBroadcast):
-    def __init__(self, workdetection:WorkDetectionClient):
+    def __init__(self, workdetection: WorkDetectionClient):
         super().__init__()
         self.workdetection = workdetection
 
     def execute(self, object):
         static_transformStamped = TransformStamped()
 
-        static_transformStamped.header.stamp = rospy.Time.now()
+        static_transformStamped.header.stamp = (
+            self.node.get_clock().now().to_msg()
+        )
+
         static_transformStamped.header.frame_id = CAMERA_NAME
         static_transformStamped.child_frame_id = MARKER_NAME
-        
-        static_transformStamped.transform.translation.x = self.workdetection.work_detect_result.work_detection_results[0].pose.position.x
-        static_transformStamped.transform.translation.y = self.workdetection.work_detect_result.work_detection_results[0].pose.position.y
-        static_transformStamped.transform.translation.z = self.workdetection.work_detect_result.work_detection_results[0].pose.position.z
 
-        static_transformStamped.transform.rotation.x = self.workdetection.work_detect_result.work_detection_results[0].pose.orientation.x
-        static_transformStamped.transform.rotation.y = self.workdetection.work_detect_result.work_detection_results[0].pose.orientation.y
-        static_transformStamped.transform.rotation.z = self.workdetection.work_detect_result.work_detection_results[0].pose.orientation.z
-        static_transformStamped.transform.rotation.w = self.workdetection.work_detect_result.work_detection_results[0].pose.orientation.w
+        static_transformStamped.transform.translation.x = (
+            self.workdetection
+            .work_detect_result
+            .work_detection_results[0]
+            .pose.position.x
+        )
 
-        self.broadcaster.sendTransform(static_transformStamped)
+        static_transformStamped.transform.translation.y = (
+            self.workdetection
+            .work_detect_result
+            .work_detection_results[0]
+            .pose.position.y
+        )
+
+        static_transformStamped.transform.translation.z = (
+            self.workdetection
+            .work_detect_result
+            .work_detection_results[0]
+            .pose.position.z
+        )
+
+        static_transformStamped.transform.rotation.x = (
+            self.workdetection
+            .work_detect_result
+            .work_detection_results[0]
+            .pose.orientation.x
+        )
+
+        static_transformStamped.transform.rotation.y = (
+            self.workdetection
+            .work_detect_result
+            .work_detection_results[0]
+            .pose.orientation.y
+        )
+
+        static_transformStamped.transform.rotation.z = (
+            self.workdetection
+            .work_detect_result
+            .work_detection_results[0]
+            .pose.orientation.z
+        )
+
+        static_transformStamped.transform.rotation.w = (
+            self.workdetection
+            .work_detect_result
+            .work_detection_results[0]
+            .pose.orientation.w
+        )
+
+        self.broadcaster.sendTransform(
+            static_transformStamped
+        )
+
         return True
 
 ###########################################
 #MovePlanner共有クラス.                   #
 ###########################################
 class ShareMovePlanner:
-    move_plannner = MovePlanner()
+    move_plannner = None
+
     @classmethod
     def get_move_planner(cls):
+        if cls.move_plannner is None:
+            cls.move_plannner = MovePlanner()
+
         return cls.move_plannner
     
 ###########################################
@@ -349,9 +427,9 @@ class PREPAR_WORK(CollaborationState):
         event = self.check_event()
         if(None != event ):
             return event
-        
+
         CollaborationTool.loginfo("waiting place_position")
-        CollaborationTool.wait_for_service('place_position_detect_service')
+        self.disc.wait_for_service()
         CollaborationTool.loginfo("place_position comes up")
 
         event = self.check_event()
@@ -374,7 +452,7 @@ class PREPAR_WORK(CollaborationState):
     #ワークを検知する.
     def WorkDetect(self):
         CollaborationTool.loginfo("waiting work_det_service")
-        CollaborationTool.wait_for_service('detect_workpieces_service')
+        self.workd.wait_for_service()
         CollaborationTool.loginfo("work_det_service comes up")
 
         #作業途中で状態遷移するイベントの確認.
