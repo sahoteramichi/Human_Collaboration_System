@@ -1,29 +1,29 @@
-cmake_minimum_required(VERSION 3.0.2)
+cmake_minimum_required(VERSION 3.8)
 project(workpieces_detection_subsystem)
 
-find_package(catkin REQUIRED COMPONENTS
-  actionlib
-  actionlib_msgs
-  message_generation
-  message_runtime
-  rospy
-  std_msgs
-  geometry_msgs
-  collaboration_manipulation_message
+find_package(ament_cmake REQUIRED)
+find_package(rosidl_default_generators REQUIRED)
+find_package(collaboration_manipulation_message REQUIRED)
+
+# DetectWorkpieces service
+rosidl_generate_interfaces(${PROJECT_NAME}
+  "srv/DetectWorkpieces.srv"
+  DEPENDENCIES
+    collaboration_manipulation_message
 )
 
-#add_message_files( 
-#  FILES
-#  )
-
-add_service_files(
-  FILES
-  DetectWorkpieces.srv
+# Python node
+install(
+  PROGRAMS
+    scripts/WorkpiecesDetectionNode.py
+  DESTINATION lib/${PROJECT_NAME}
 )
 
-generate_messages( 
-  DEPENDENCIES 
-  std_msgs
-  geometry_msgs
-  collaboration_manipulation_message
+# Configuration files
+install(
+  DIRECTORY
+    config
+  DESTINATION share/${PROJECT_NAME}
 )
+
+ament_package()
